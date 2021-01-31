@@ -24,7 +24,7 @@ def format_input(input):
     return input_reshaped
 
 
-def batch_format(dataset, T_in_seq, T_out_seq, time_major=True):
+def batch_format(dataset, T_in_seq, T_out_seq, shift, time_major=True):
     """
     Format the dataset into the form [T_seq, n_batches, n_dims] from the form [T, n_dims]
     :param dataset: The dataset in the form  [T, n_dims]
@@ -40,10 +40,10 @@ def batch_format(dataset, T_in_seq, T_out_seq, time_major=True):
     inputs = []
     targets = []
     # Loop over the indexes, extract a sample at that index and run it through the model
-    for t in range(T - T_in_seq - T_out_seq + 1):
+    for t in range(T - T_in_seq - T_out_seq - shift + 1):
         # Extract the training and testing samples at the current permuted index
         inputs.append(dataset[t: t + T_in_seq, :])
-        targets.append(dataset[t + T_in_seq:t + T_in_seq + T_out_seq, :])
+        targets.append(dataset[t + T_in_seq + shift:t + T_in_seq + shift+ T_out_seq, :])
 
     # Convert lists to arrays of size [n_samples, T_in, N] and [n_samples, T_out, N]
     inputs = np.array(inputs)
@@ -73,7 +73,19 @@ def time_series(t, f=0.02):
     ys = np.reshape(ys, (T,1))
     return ys
 
+
 def generate_data(T = 2750, period = 50, n_seqs = 4):
+    # Generate n_seqs of sequences using the time_series method
+    f = 1/period
+
+    y = []
+    for i in range(n_seqs):
+        idx = np.random.randint(0, T)
+        y.append(time_series(np.arange(idx, idx + T), f=f))
+    return np.concatenate(y, axis=1)
+
+
+def process_data(dataset, T_in_seq, T_out_seq, shift):
     """
     Generate a dataset using the time_series function. The function generates a dataset
     comprising 'n_seqs' time-series sequences of length T. This dataset is split into
@@ -88,22 +100,16 @@ def generate_data(T = 2750, period = 50, n_seqs = 4):
     :return valid_data: the dataset for validating the model. Shape: [n_seqs, T]
     :return period: The period of the fundamental seasonal component of the time series.
     """
-
+    T = dataset.shape[0]
+    n_seqs = dataset.shape[1]
     # Frequency
-    f = 1/period
-    T_in_seq = 2 * period
-    T_out_seq = period
+    # T_in_seq = 2 * period
+    # T_out_seq = period
 
     n_samples = T - T_in_seq - T_out_seq + 1
-    test_idx = n_samples - int(0.2 * n_samples)
+    test_idx = n_samples - int(0.7 * n_samples)
     valid_idx = n_samples - int(0.1 * n_samples)
 
-    # Generate n_seqs of sequences using the time_series method
-    y = []
-    for i in range(n_seqs):
-        idx = np.random.randint(0, T)
-        y.append(time_series(np.arange(idx, idx + T), f=f))
-    dataset = np.concatenate(y, axis=1)
 
     # Scale dataset to range [0, 1]
     minVal = 0.0
@@ -121,7 +127,7 @@ def generate_data(T = 2750, period = 50, n_seqs = 4):
     validY_list = []
     for i in range(n_seqs):
         # Convert to batch format
-        inputs, targets = batch_format(dataset[:,[i]], T_in_seq, T_out_seq, time_major=True)
+        inputs, targets = batch_format(dataset[:,[i]], T_in_seq, T_out_seq, shift, time_major=True)
         trainX_list.append(inputs[:, :test_idx, :])
         trainY_list.append(targets[:, :test_idx, :])
         testX_list.append(inputs[:, test_idx:valid_idx, :])
@@ -129,11 +135,11 @@ def generate_data(T = 2750, period = 50, n_seqs = 4):
         validX_list.append(inputs[:, valid_idx:, :])
         validY_list.append(targets[:, valid_idx:, :])
 
-    train_x = np.concatenate(trainX_list, axis=1)
-    train_y = np.concatenate(trainY_list, axis=1)
-    test_x = np.concatenate(testX_list, axis=1)
-    test_y = np.concatenate(testY_list, axis=1)
-    valid_x = np.concatenate(validX_list, axis=1)
-    valid_y = np.concatenate(validY_list, axis=1)
+    train_x = np.concatenate(trainX_list, axis=2)
+    train_y = np.concatenate(trainY_list, axis=2)
+    test_x = np.concatenate(testX_list, axis=2)
+    test_y = np.concatenate(testY_list, axis=2)
+    valid_x = np.concatenate(validX_list, axis=2)
+    valid_y = np.concatenate(validY_list, axis=2)
 
-    return train_x, train_y, test_x, test_y, valid_x, valid_y, period
+    return train_x, train_y, test_x, test_y, valid_x, valid_y

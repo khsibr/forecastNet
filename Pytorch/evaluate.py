@@ -44,7 +44,6 @@ def evaluate(fcstnet, test_x, test_y, return_lists=False):
         test_y = test_y.to(fcstnet.device)
 
         # Number of batch samples
-        n_samples = test_x.shape[0]
 
         # Inference
         y_pred_list = []
@@ -58,22 +57,29 @@ def evaluate(fcstnet, test_x, test_y, return_lists=False):
         # Compute outputs for a linear output
         elif fcstnet.model_type == 'dense2' or fcstnet.model_type == 'conv2':
             y_pred = fcstnet.model(test_x, test_y, is_training=False)
-
-        mase_list = []
-        smape_list = []
-        nrmse_list = []
-        for i in range(n_samples):
-            mase, se, smape, nrmse = calculate_error(y_pred[:, i, :].cpu().numpy(), test_y[:, i, :].cpu().numpy())
-            mase_list.append(mase)
-            smape_list.append(smape)
-            nrmse_list.append(nrmse)
-        # writer.close()
-        mase = np.mean(mase_list)
-        smape = np.mean(smape_list)
-        nrmse = np.mean(nrmse_list)
+        y_pred_cpu = y_pred.cpu().numpy()
+        test_y_cpu = test_y.cpu().numpy()
+        mase, nrmse, smape = calculate_error_mean(test_y_cpu, y_pred_cpu)
 
     if return_lists:
         return np.ndarray.flatten(np.array(mase_list)), np.ndarray.flatten(np.array(smape_list)), np.ndarray.flatten(
             np.array(nrmse_list))
     else:
         return mase, smape, nrmse
+
+
+def calculate_error_mean(test_y, y_pred):
+    mase_list = []
+    smape_list = []
+    nrmse_list = []
+    n_samples = test_y.shape[0]
+    for i in range(n_samples):
+        mase, se, smape, nrmse = calculate_error(y_pred[:, i, :], test_y[:, i, :])
+        mase_list.append(mase)
+        smape_list.append(smape)
+        nrmse_list.append(nrmse)
+    # writer.close()
+    mase = np.mean(mase_list)
+    smape = np.mean(smape_list)
+    nrmse = np.mean(nrmse_list)
+    return mase, nrmse, smape

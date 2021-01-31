@@ -16,69 +16,73 @@ from evaluate import evaluate
 from dataHelpers import generate_data, process_data
 import pandas as pd
 
-#Use a fixed seed for repreducible results
-np.random.seed(1)
+from window_generator import WindowGenerator
+import os
 
-# Generate the dataset
-# train_x, train_y, test_x, test_y, valid_x, valid_y, period = generate_data(T=2750, period = 50, n_seqs = 4)
+OUT_STEPS = 48
+shift = 24
+input_width = 48
 
-# df = pd.read_csv('/Users/ryadhkhisb/Dev/workspaces/m/finance-scrape/LSTNet/data/aapl_15min.csv')
-# df = df[[c for c in df.columns if 'aapl_15min' in c]]
-df = pd.read_parquet('/Users/ryadhkhisb/Dev/workspaces/m/finance-scrape/data/nasdaq100_15min.parquet')
-# df = pd.DataFrame(
-#     np.array([
-#         np.arange(100), np.arange(100), np.arange(100),
-#         np.arange(100).astype(np.float32) / 100,
-#         np.arange(100).astype(np.float32) / 100]).transpose(),
-#     columns=['c1', 'c2', 'c3', 'open', 'close'])
+data_path = os.environ.get('DATA_PATH') or '/tmp/data/'
+model_path = os.environ.get('MODEL_PATH') or '/tmp/model/'
+d15 = pd.read_parquet('/Users/ryadhkhisb/Dev/workspaces/m/finance-scrape/data/nasdaq100_15min.parquet')
 
-# df=(df-df.mean())/df.std()
+column_indices = {name: i for i, name in enumerate(d15.columns)}
 
-in_seq_length = 8
-out_seq_length = 8
-shift = 2
-train_mean = df.mean()
-train_std = df.std()
+d15['close'] = d15['last']
 
-df = (df - train_mean) / train_std
-train_x, train_y, test_x, test_y, valid_x, valid_y = process_data(df.to_numpy(),
-                                                                  T_in_seq=in_seq_length,
-                                                                  T_out_seq = out_seq_length,
-                                                                  shift=shift)
-# train_mean = train_x.mean()
-# train_std = train_x.std()
-#
-# train_x = (train_x - train_mean) / train_std
-# valid_x = (valid_x - train_mean) / train_std
-# test_x = (test_x - train_mean) / train_std
+n = len(d15)
+train_df = d15[0:int(n * 0.7)]
+val_df = d15[int(n * 0.7):int(n * 0.9)]
+test_df = d15[int(n * 0.9):]
+
+num_features = d15.shape[1]
+
+train_mean = train_df.mean()
+train_std = train_df.std()
+
+train_df = (train_df - train_mean) / train_std
+val_df = (val_df - train_mean) / train_std
+test_df = (test_df - train_mean) / train_std
 
 
-# train_size = int(len(df) * 0.66)
-# df_train, df_test = df[0:train_size], df[train_size:len(df)]
-#
-# train_size = int(len(df_train) * 0.90)
-# df_train, df_val = df_train[0:train_size], df_train[train_size:len(df_train)]
-# def from_df(df):
-#     return df.to_numpy()[np.newaxis, :]  , df.iloc[:,-3:-2].to_numpy()[np.newaxis, :]
-#
-# train_x, train_y = from_df(df_train)
-# valid_x, valid_y = from_df(df_val)
-# test_x, test_y = from_df(df_test)
+label_columns = train_df.columns.tolist()
+num_labels = len(label_columns)
+wide_window = WindowGenerator(input_width=input_width, label_width=OUT_STEPS, shift=shift, label_columns=label_columns,
+                              train_df=train_df, val_df=val_df, test_df=test_df)
+
+test_data = [x for x in wide_window.test.as_numpy_iterator()]
+train_data = [x for x in wide_window.train.as_numpy_iterator()]
+valid_data = [x for x in wide_window.val.as_numpy_iterator()]
+test_y = np.concatenate(np.array([x[1] for x in test_data]))
+test_x = np.concatenate(np.array([x[0] for x in test_data]))
+train_y = np.concatenate(np.array([x[1] for x in train_data]))
+train_x = np.concatenate(np.array([x[0] for x in train_data]))
+valid_y = np.concatenate(np.array([x[1] for x in valid_data]))
+valid_x = np.concatenate(np.array([x[0] for x in valid_data]))
+
+test_y = np.swapaxes(test_y, 1, 0)
+test_x = np.swapaxes(test_x, 1, 0)
+train_y = np.swapaxes(train_y, 1, 0)
+train_x = np.swapaxes(train_x, 1, 0)
+valid_y = np.swapaxes(valid_y, 1, 0)
+valid_x = np.swapaxes(valid_x, 1, 0)
+
 
 # Model parameters
-model_type = 'conv2' #'dense' or 'conv', 'dense2' or 'conv2'
+model_type = 'conv' #'dense' or 'conv', 'dense2' or 'conv2'
 
 hidden_dim = 24
 input_dim = train_x.shape[-1]
 output_dim = train_x.shape[-1]
 learning_rate = 0.0001
-n_epochs=20
-batch_size = 32
+n_epochs=2
+batch_size = 64
 
 # Initialise model
-fcstnet = forecastNet(in_seq_length=in_seq_length, out_seq_length=out_seq_length, input_dim=input_dim,
-                        hidden_dim=hidden_dim, output_dim=output_dim, model_type = model_type, batch_size = batch_size,
-                        n_epochs = n_epochs, learning_rate = learning_rate, save_file = './forecastnet.pt')
+fcstnet = forecastNet(in_seq_length=input_width, out_seq_length=input_width, input_dim=input_dim,
+                    hidden_dim=hidden_dim, output_dim=output_dim, model_type = model_type, batch_size = batch_size,
+                    n_epochs = n_epochs, learning_rate = learning_rate, save_file = './forecastnet.pt')
 
 # Train the model
 training_costs, validation_costs = train(fcstnet, train_x, train_y, valid_x, valid_y, restore_session=False)
@@ -112,13 +116,13 @@ if model_type == 'dense' or model_type == 'conv':
 
     for i in range(len(samples)):
         plt.figure()
-        plt.plot(np.arange(0, in_seq_length), test_x[:, samples[i], 0],
+        plt.plot(np.arange(0, input_width), test_x[:, samples[i], 0],
                  '-o', label='input')
-        plt.plot(np.arange(in_seq_length, in_seq_length + out_seq_length), test_y[:, samples[i], 0],
+        plt.plot(np.arange(input_width, input_width + input_width), test_y[:, samples[i], 0],
                  '-o', label='data')
-        plt.plot(np.arange(in_seq_length, in_seq_length + out_seq_length), s_mean[:, i, 0],
+        plt.plot(np.arange(input_width, input_width + input_width), s_mean[:, i, 0],
                  '-*', label='forecast')
-        plt.fill_between(np.arange(in_seq_length, in_seq_length + out_seq_length),
+        plt.fill_between(np.arange(input_width, input_width + input_width),
                          botVarLine[:, i, 0], topVarLine[:, i, 0],
                          color='gray', alpha=0.3, label='Uncertainty')
         plt.legend()
